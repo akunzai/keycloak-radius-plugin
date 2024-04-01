@@ -10,14 +10,21 @@ import com.github.vzakharchenko.radius.dm.models.RadiusServiceModel;
 import com.github.vzakharchenko.radius.models.RadiusServerSettings;
 import com.google.common.annotations.VisibleForTesting;
 import org.keycloak.Config;
-import org.keycloak.models.*;
+import org.keycloak.models.ClientModel;
+import org.keycloak.models.GroupModel;
+import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.KeycloakSessionFactory;
+import org.keycloak.models.KeycloakTransactionManager;
+import org.keycloak.models.RealmModel;
+import org.keycloak.models.RoleModel;
+import org.keycloak.models.UserModel;
+import org.keycloak.models.UserSessionModel;
 import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.representations.AccessToken;
 import org.keycloak.services.ForbiddenException;
 import org.keycloak.services.resource.RealmResourceProviderFactory;
 
 import javax.ws.rs.QueryParam;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -59,11 +66,17 @@ public class RadiusServiceImpl implements RealmResourceProviderFactory,
 
             }
             if (event instanceof ClientModel.ClientUpdatedEvent) {
-                ClientModel.ClientUpdatedEvent postCreateEvent =
-                        (ClientModel.ClientUpdatedEvent) event;
-                KeycloakModelUtils.runJobInTransaction(factory,
-                        keycloakSession ->
-                                create(keycloakSession).init(postCreateEvent.getUpdatedClient()));
+                ClientModel.ClientUpdatedEvent postUpdateEvent = (ClientModel.ClientUpdatedEvent)event;
+                KeycloakTransactionManager tx = postUpdateEvent.getKeycloakSession()
+                        .getTransactionManager();
+                if (!tx.isActive()) {
+                    tx.begin();
+                }
+                create(postUpdateEvent.getKeycloakSession())
+                        .init(postUpdateEvent.getUpdatedClient());
+                if (!tx.isActive()) {
+                    tx.commit();
+                }
             }
         });
     }
@@ -133,9 +146,8 @@ public class RadiusServiceImpl implements RealmResourceProviderFactory,
         UserModel userModel = session.users().getUserById(realm, userId);
         RadiusServiceModel rsm = new RadiusServiceModel();
         transform(rsm, dmm);
-        List<String> roles = new ArrayList<>(userModel
-                .getRoleMappingsStream().map(RoleModel::getName)
-                .collect(Collectors.toList()));
+        List<String> roles = userModel
+                .getRoleMappingsStream().map(RoleModel::getName).collect(Collectors.toList());
         realm.getClientsStream().forEach(app -> roles
                 .addAll(userModel.getClientRoleMappingsStream(app)
                         .map(RoleModel::getName)
